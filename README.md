@@ -1,5 +1,8 @@
 # mitsuba-oidn
 
+[![PyPI](https://img.shields.io/pypi/v/mitsuba-oidn.svg?color=green)](https://pypi.org/project/mitsuba-oidn)
+[![Wheels](https://github.com/mitsuba-renderer/mitsuba-oidn/actions/workflows/wheels.yml/badge.svg)](https://github.com/mitsuba-renderer/mitsuba-oidn/actions/workflows/wheels.yml)
+
 This package provides unofficial Python bindings for [Intel Open Image
 Denoise](https://www.openimagedenoise.org) (OIDN) for use with Dr.Jit and the
 Mitsuba renderer.
