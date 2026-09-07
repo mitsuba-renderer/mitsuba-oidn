@@ -1,0 +1,71 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind==3.0.1"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mitsuba-oidn"
+version = "0.1.0"
+description = "Python bindings for Intel Open Image Denoise with NumPy, CUDA, and Metal support"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "Wenzel Jakob", email = "wenzel@mitsuba-renderer.org" },
+]
+license = "BSD-3-Clause"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+dependencies = [
+    "nanobind-backend>=1.0",
+    "drjit>=1.5.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "numpy"]
+
+[project.urls]
+Homepage = "https://github.com/mitsuba-renderer/mitsuba-oidn"
+
+[tool.scikit-build]
+minimum-version = "0.10"
+build-dir = "build/{wheel_tag}"
+wheel.py-api = "cp310"
+install.components = ["python"]
+cmake.build-type = "Release"
+sdist.exclude = ["ext/ispc", "build"]
+
+[tool.cibuildwheel]
+# Necessary to see build output from the actual compilation
+build-verbosity = 1
+
+# One Python version per platform suffices (see 'wheel.py-api' above)
+build = "cp310-*"
+archs = ["auto64"]
+
+# The 'nanobind-backend' package needs a shared C++ runtime, which rules out
+# musl. Its wheels furthermore target manylinux_2_28.
+skip = "*-musllinux* pp*"
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+
+test-requires = ["pytest", "numpy"]
+test-command = "pytest {project}/tests"
+
+# Needed for full C++17 support
+[tool.cibuildwheel.macos.environment]
+MACOSX_DEPLOYMENT_TARGET = "11.0"
+
+[tool.cibuildwheel.linux]
+# ISPC and the CUDA toolkit are installed inside the manylinux container
+before-all = "bash {project}/.github/workflows/install_ispc.sh && bash {project}/.github/workflows/install_cuda_linux.sh"
+# The CUDA device module links the driver library, which comes with the
+# NVIDIA driver at runtime and must not be bundled into the wheel
+repair-wheel-command = "auditwheel repair -w {dest_dir} --exclude libcuda.so.1 {wheel}"
+
+[tool.cibuildwheel.linux.environment]
+PATH = "/usr/local/cuda-12.8/bin:$PATH"
+CUDAToolkit_ROOT = "/usr/local/cuda-12.8"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
