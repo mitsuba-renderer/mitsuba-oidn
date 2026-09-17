@@ -74,9 +74,10 @@ yields a NumPy array, a CUDA tensor yields a CUDA tensor. Its shape is
   documentation](https://www.openimagedenoise.org/documentation.html) for
   details.
 - `device` selects the device. By default, CUDA arrays use a CUDA device with
-  the matching ordinal, and host arrays use the fastest physical device in the
-  system, which can be overridden with the `OIDN_DEFAULT_DEVICE` environment
-  variable (`cpu`, `cuda`, `metal`, or a physical device ID).
+  the matching ordinal, Dr.Jit Metal arrays use the Metal device, and host
+  arrays use the fastest physical device in the system, which can be
+  overridden with the `OIDN_DEFAULT_DEVICE` environment variable (`cpu`,
+  `cuda`, `metal`, or a physical device ID).
 - `output` supplies a preallocated array that is filled in place and returned.
   With an RGBA output array, OIDN writes the RGB channels and leaves alpha
   untouched.
@@ -86,7 +87,9 @@ yields a NumPy array, a CUDA tensor yields a CUDA tensor. Its shape is
 
 When the device cannot access an input array directly, for example a NumPy
 array passed to a CUDA device, `denoise()` copies it into a device buffer.
-Otherwise no copies are made.
+Otherwise no copies are made. Dr.Jit arrays are bound directly on all
+backends, including Metal, and the result of a Dr.Jit input is filtered
+straight into a fresh Dr.Jit array.
 
 ```python
 import numpy as np
@@ -161,7 +164,7 @@ a copy depends on the device:
 |---|---|
 | CPU | any host array, including CUDA pinned and managed memory |
 | CUDA | arrays on the same CUDA device, pinned host memory, and host memory if the GPU supports pageable memory access |
-| Metal | any host array, and views of buffers created on the device |
+| Metal | any host array, Dr.Jit Metal arrays, and views of buffers created on the device |
 
 Use `dev.can_share(array)` to test this in advance. When binding is not
 possible, `set_image()` raises a `TypeError` that points at the buffer API.
@@ -210,7 +213,8 @@ progress monitor cancels the filter and propagates unchanged.
 
 The build needs CMake 3.21 or newer, a C++17 compiler, and a binary release
 of [ISPC](https://ispc.github.io/downloads.html) unpacked into `ext/ispc`,
-so that `ext/ispc/bin/ispc` exists. Metal support requires Xcode 15 or newer.
+so that `ext/ispc/bin/ispc` exists (a symlink to an installed `ispc` binary
+works as well). Metal support requires Xcode 15 or newer.
 CUDA support requires CUDA 12.8 or newer and is enabled automatically when the
 toolkit is found.
 

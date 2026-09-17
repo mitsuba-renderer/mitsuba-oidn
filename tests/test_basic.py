@@ -177,7 +177,7 @@ def test_cancel():
     reason="Dr.Jit 1.5 unloads LLVM-C.dll at exit, whose thread-local cleanup "
            "callbacks Windows then invokes from unmapped memory")
 def test_drjit_tensors():
-    import drjit as dr
+    dr = pytest.importorskip("drjit")
     from drjit.llvm import TensorXf
 
     if not dr.has_backend(dr.JitBackend.LLVM):
@@ -189,3 +189,35 @@ def test_drjit_tensors():
     assert isinstance(out, TensorXf)
     assert out.shape == clean.shape
     assert mse(out.numpy(), clean) < 0.25 * mse(noisy, clean)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Metal is Apple-only")
+def test_drjit_metal_tensors():
+    dr = pytest.importorskip("drjit")
+
+    if not dr.has_backend(dr.JitBackend.Metal):
+        pytest.skip("the Dr.Jit Metal backend is unavailable")
+    from drjit.metal import TensorXf
+
+    clean, noisy, albedo, normal = make_scene()
+    dev = oidn.Device(oidn.DeviceType.Metal)
+    color = TensorXf(noisy)
+    assert dev.can_share(color)
+    assert oidn.image_info(color)[4] == 8  # DLPack device type kDLMetal
+
+    # Fresh output allocated as a Dr.Jit array on the device
+    out = oidn.denoise(color, TensorXf(albedo), TensorXf(normal), device=dev)
+    assert isinstance(out, TensorXf)
+    assert mse(out.numpy(), clean) < 0.25 * mse(noisy, clean)
+
+    # In-place filtering of an RGBA tensor leaves alpha untouched
+    rgba = np.concatenate([noisy, np.full(noisy.shape[:2] + (1,), 0.7, np.float32)], axis=-1)
+    color = TensorXf(rgba)
+    assert oidn.denoise(color, output=color) is color
+    res = color.numpy()
+    assert np.all(res[..., 3] == 0.7)
+    assert mse(res[..., :3], clean) < 0.5 * mse(noisy, clean)
+
+    # The CPU device cannot access Metal arrays
+    with pytest.raises(TypeError):
+        oidn.denoise(TensorXf(noisy), device=oidn.Device(oidn.DeviceType.CPU))

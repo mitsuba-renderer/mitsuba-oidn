@@ -51,14 +51,17 @@ static void check(OIDNDevice device) {
 // Thread pool (nanothread entry points resolved from a shared library)
 // ------------------------------------------------------------------------------------------------
 
+// Loads the shared library at 'path'. A bare file name refers to a library that another
+// module (in practice, the Dr.Jit extension) has already loaded into the process.
 static void *load_library(const std::string &path) {
+    bool loaded = path.find('/') == std::string::npos && path.find('\\') == std::string::npos;
 #if defined(_WIN32)
     int n = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
     std::wstring wpath(n, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, &wpath[0], n);
-    return (void *) LoadLibraryW(wpath.c_str());
+    return (void *) (loaded ? GetModuleHandleW(wpath.c_str()) : LoadLibraryW(wpath.c_str()));
 #else
-    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    return dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL | (loaded ? RTLD_NOLOAD : 0));
 #endif
 }
 
@@ -178,14 +181,43 @@ static ImageInfo describe_image(const AnyArray &a) {
 }
 
 // Casts an arbitrary Python object into an nd-array, reporting whether it is writable
+#if defined(__APPLE__)
+// Dr.Jit exports Metal arrays through DLPack as a host copy unless the device representation
+// is requested explicitly. Returns a capsule holding that representation, or an invalid object
+// for other arrays.
+static nb::object metal_export(nb::handle obj) {
+    nb::object module = nb::borrow(obj.type()).attr("__module__");
+    if (!nb::isinstance<nb::str>(module) ||
+        nb::cast<std::string>(module).rfind("drjit.metal", 0) != 0)
+        return nb::object();
+    return obj.attr("__dlpack__")(nb::arg("dl_device") = nb::make_tuple((int) DL_METAL, 0));
+}
+
+// Resolves the MTLBuffer backing a pointer exported by Dr.Jit, whose core library is loaded
+// whenever such a pointer exists
+static void *metal_buffer_of(const void *ptr, size_t *offset) {
+    using Lookup = void *(*)(void *, size_t *);
+    static Lookup lookup = nullptr;
+    if (!lookup)
+        lookup = (Lookup) dlsym(RTLD_DEFAULT, "jit_metal_lookup_buffer");
+    return lookup ? lookup((void *) ptr, offset) : nullptr;
+}
+#endif
+
 static AnyArray to_array(nb::handle obj, bool &writable) {
+    nb::object src = nb::borrow(obj);
+#if defined(__APPLE__)
+    nb::object capsule = metal_export(obj);
+    if (capsule.is_valid())
+        src = std::move(capsule);
+#endif
     nb::ndarray<> rw;
-    if (nb::try_cast(obj, rw, false)) {
+    if (nb::try_cast(src, rw, false)) {
         writable = true;
         return AnyArray(rw);
     }
     AnyArray ro;
-    if (nb::try_cast(obj, ro, false)) {
+    if (nb::try_cast(src, ro, false)) {
         writable = false;
         return ro;
     }
@@ -305,8 +337,15 @@ struct Device {
             case OIDN_DEVICE_TYPE_METAL:
                 if (host)
                     return "";
-                return "the Metal device can only access host arrays and Buffers created "
-                       "on the device";
+#if defined(__APPLE__)
+                if (dt == DL_METAL) {
+                    if (metal_buffer_of(info.data, &offset))
+                        return "";
+                    return "the Metal array does not reference memory managed by Dr.Jit";
+                }
+#endif
+                return "the Metal device can only access host arrays, Dr.Jit Metal arrays, "
+                       "and Buffers created on the device";
 
             default:
                 return "the device cannot access this array directly; pass a Buffer "
@@ -325,6 +364,18 @@ static OIDNBuffer new_page_buffer(Device &dev, const ImageInfo &info, size_t *of
     *offset = (uintptr_t) info.data - begin;
     return buffer;
 }
+
+#if defined(__APPLE__)
+// Wraps the MTLBuffer behind a Dr.Jit Metal image in a shared OIDN buffer
+static OIDNBuffer new_metal_buffer(Device &dev, const ImageInfo &info, size_t *offset) {
+    void *mtl_buffer = metal_buffer_of(info.data, offset);
+    if (!mtl_buffer)
+        throw nb::type_error("the Metal array does not reference memory managed by Dr.Jit");
+    OIDNBuffer buffer = oidnNewSharedBufferFromMetal(dev.h, (MTLBuffer_id) mtl_buffer);
+    check(dev.h);
+    return buffer;
+}
+#endif
 
 // ------------------------------------------------------------------------------------------------
 // Buffer
@@ -520,6 +571,12 @@ struct Filter {
         if (range) {
             oidnSetFilterImage(h, name.c_str(), range->buffer, info.format, info.width,
                                info.height, offset, info.pixel_stride, info.row_stride);
+#if defined(__APPLE__)
+        } else if (info.device_type == DL_METAL) {
+            page_buffer = new_metal_buffer(*device, info, &offset);
+            oidnSetFilterImage(h, name.c_str(), page_buffer, info.format, info.width,
+                               info.height, offset, info.pixel_stride, info.row_stride);
+#endif
         } else if (device->type() == OIDN_DEVICE_TYPE_METAL) {
             page_buffer = new_page_buffer(*device, info, &offset);
             oidnSetFilterImage(h, name.c_str(), page_buffer, info.format, info.width,

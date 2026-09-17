@@ -16,6 +16,7 @@ from ._mitsuba_oidn_ext import (
 _DL_CPU = 1
 _DL_CUDA = 2
 _DL_CUDA_HOST = 3
+_DL_METAL = 8
 _DL_ROCM_HOST = 11
 _DL_CUDA_MANAGED = 13
 
@@ -37,11 +38,18 @@ atexit.register(_release_caches)
 
 def _device_for(device_type, device_id):
     """Return a cached device matching the DLPack device of an input array"""
-    key = (device_type, device_id) if device_type in (_DL_CUDA, _DL_CUDA_MANAGED) else None
+    if device_type in (_DL_CUDA, _DL_CUDA_MANAGED):
+        key = (device_type, device_id)
+    elif device_type == _DL_METAL:
+        key = (device_type, 0)
+    else:
+        key = None
     dev = _devices.get(key)
     if dev is None:
         if key is None:
             dev = Device(DeviceType.Default)
+        elif device_type == _DL_METAL:
+            dev = Device(DeviceType.Metal)
         else:
             dev = Device.cuda(device_id)
         _devices[key] = dev
@@ -68,8 +76,6 @@ def _framework(array):
 
 def _from_dlpack(framework, view, like):
     """Convert an exported buffer view to the framework of the input"""
-    if framework == "drjit":
-        return type(like)(view)
     if framework == "numpy":
         import numpy
 
@@ -187,12 +193,20 @@ def denoise(color, albedo=None, normal=None, *, hdr=False, srgb=False,
         flt.quality = quality
         flt.input_scale = input_scale
 
+        out_channels = min(channels, 3)
+        shape = (height, width) if ndim == 2 else (height, width, out_channels)
+
+        if output is None and framework == "drjit":
+            # Filtering into a Dr.Jit array keeps the result on its device
+            import drjit
+
+            output = drjit.empty(type(color), shape)
+
         if output is not None:
             flt.set_image("output", output)
             flt.execute()
             return output
 
-        out_channels = min(channels, 3)
         nbytes = height * width * out_channels * itemsize
         dtype = "float16" if itemsize == 2 else "float32"
 
@@ -205,7 +219,6 @@ def denoise(color, albedo=None, normal=None, *, hdr=False, srgb=False,
         flt.set_image("output", out_buf, format=fmt, width=width, height=height)
         flt.execute()
 
-        shape = (height, width) if ndim == 2 else (height, width, out_channels)
         view = out_buf.view(dtype, shape)
 
     return _from_dlpack(framework, view, color)

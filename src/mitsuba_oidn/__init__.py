@@ -49,9 +49,18 @@ def _install_thread_pool():
         name = "libnanothread.so"
 
     path = os.path.join(os.path.dirname(spec.origin), name)
-    if not os.path.exists(path):
-        raise ImportError(f"mitsuba_oidn: thread pool library not found at {path}")
-    _set_thread_pool(path)
+    if os.path.exists(path):
+        _set_thread_pool(path)
+        return
+
+    # Source builds of Dr.Jit keep the library elsewhere. Importing the
+    # extension loads it, after which the bare name resolves to that copy.
+    import drjit  # noqa: F401
+
+    try:
+        _set_thread_pool(name)
+    except RuntimeError as e:
+        raise ImportError(f"mitsuba_oidn: thread pool library not found at {path}") from e
 
 
 _install_thread_pool()

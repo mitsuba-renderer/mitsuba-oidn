@@ -5,7 +5,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mitsuba-oidn"
-version = "0.1.0"
+version = "0.1.1"
 description = "Unofficial Python bindings for Intel Open Image Denoise (OIDN)"
 readme = "README.md"
 requires-python = ">=3.10"
