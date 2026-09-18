@@ -140,7 +140,16 @@ if (OIDN_DEVICE_CUDA)
   else()
     set(_cuda_dir "${CMAKE_INSTALL_LIBDIR}")
   endif()
-  install(DIRECTORY "${OIDN_ROOT_BINARY_DIR}/devices/cuda/preinstall/${_cuda_dir}/"
+  set(_cuda_preinstall "${CMAKE_CURRENT_BINARY_DIR}/ext/oidn/devices/cuda/preinstall/${_cuda_dir}")
+  # install(DIRECTORY) silently skips a missing source directory
+  install(CODE "
+    file(GLOB _cuda_libs \"${_cuda_preinstall}/*mitsuba_oidn_device_cuda*\")
+    if (NOT _cuda_libs)
+      message(FATAL_ERROR \"mitsuba-oidn: CUDA device module not found in ${_cuda_preinstall}\")
+    endif()"
+    COMPONENT python
+  )
+  install(DIRECTORY "${_cuda_preinstall}/"
     DESTINATION mitsuba_oidn
     COMPONENT python
     USE_SOURCE_PERMISSIONS
